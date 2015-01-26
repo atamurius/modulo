@@ -11,9 +11,10 @@ import java.util.*;
 
 import static java.lang.Math.max;
 import static java.lang.String.format;
+import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableCollection;
 import static java.util.Objects.requireNonNull;
-import static ua.atamurius.modulo.manager.Module.State.FREEZED;
+import static ua.atamurius.modulo.manager.Module.State.FROZEN;
 import static ua.atamurius.modulo.manager.Module.State.INVALIDATED;
 import static ua.atamurius.modulo.manager.Module.State.UNLOADED;
 
@@ -21,17 +22,19 @@ import static ua.atamurius.modulo.manager.Module.State.UNLOADED;
  * Module, represented by JAR with it's own class loader.
  * - Module is loaded as ACTIVE and collect dependency modules
  * - Module becomes INVALIDATED and invalidates dependent modules
- * - Module becomes UNLOADED and dependent modules became FREEZED
+ * - Module becomes UNLOADED and dependent modules became FROZEN
  * - Module is updated and clears dependencies
  */
-public class Module {
+public class Module extends AbstractModule {
 
     private static final Logger log = LoggerFactory.getLogger(Module.class);
 
-    private final Collection<ModuleStateListener> listeners = new ArrayList<>();
-    private final Collection<Module> dependencies = new ArrayList<>();
+    private final Map<Module,Set<String>> dependencies = new HashMap<>();
 
-    public enum State { FREEZED, ACTIVE, INVALIDATED, UNLOADED }
+    private static final boolean COLLECT_CLASSES =
+            ! "false".equalsIgnoreCase(System.getProperty(Module.class.getName() +".COLLECT_CLASSES"));
+
+    public enum State { FROZEN, ACTIVE, INVALIDATED, UNLOADED }
 
     private State state = UNLOADED;
     private int version = 0;
@@ -48,8 +51,18 @@ public class Module {
         manager.register(this);
     }
 
+    public File getSource() {
+        return file;
+    }
+
     public Collection<Module> getDependencies() {
-        return unmodifiableCollection(dependencies);
+        return unmodifiableCollection(dependencies.keySet());
+    }
+
+    public Collection<String> getDependencyClasses(Module module) {
+        return dependencies.containsKey(module) ?
+                unmodifiableCollection(dependencies.get(module)) :
+                Collections.<String>emptySet();
     }
 
     private final ModuleStateListener dependencyListener = new ModuleStateListener() {
@@ -57,13 +70,13 @@ public class Module {
         public void stateChanged(Module module) {
             switch (module.getState()) {
                 case INVALIDATED:
-                    if (state == FREEZED)
+                    if (state == FROZEN)
                         evaluateState();
                     else
                         invalidate();
                     break;
                 case UNLOADED:
-                    setState(FREEZED);
+                    setState(FROZEN);
                     break;
             }
         }
@@ -74,18 +87,19 @@ public class Module {
             return; // nothing can be changed
         }
         Set<State> deps = new HashSet<>();
-        for (Module dep: dependencies) {
+        for (Module dep: dependencies.keySet()) {
             deps.add(dep.getState());
         }
-        if (deps.contains(UNLOADED) || deps.contains(FREEZED)) {
-            setState(FREEZED); // some dependencies are missing
+        if (deps.contains(UNLOADED) || deps.contains(FROZEN)) {
+            setState(FROZEN); // some dependencies are missing
         }
-        else if (deps.contains(INVALIDATED) || state == FREEZED) {
+        else if (deps.contains(INVALIDATED) || state == FROZEN) {
             setState(INVALIDATED);
         }
         // TODO circular dependencies
     }
 
+    @Override
     public Loader getLoader() {
         return loader;
     }
@@ -94,10 +108,15 @@ public class Module {
         return state == State.ACTIVE;
     }
 
-    public void addDependency(Module module) {
-        dependencies.add(module);
-        module.addModuleListener(dependencyListener);
-        log.debug("{} depends on {}", this, module);
+    public void addDependency(Module module, String requestedClass) {
+        if (! dependencies.containsKey(module)) {
+            dependencies.put(module, new HashSet<String>());
+            module.addModuleListener(dependencyListener);
+        }
+        if (COLLECT_CLASSES) {
+            dependencies.get(module).add(requestedClass);
+        }
+        log.debug("{} depends on {} through {}", this, module, requestedClass);
     }
 
     public void unload() {
@@ -112,22 +131,12 @@ public class Module {
         return state;
     }
 
-    public void addModuleListener(ModuleStateListener listener) {
-        listeners.add(listener);
-    }
-
-    public void removeModuleListener(ModuleStateListener listener) {
-        listeners.remove(listener);
-    }
 
     private void setState(State state) {
         if (this.state != state) {
             this.state = state;
             log.debug("{} state changed", this);
-            ModuleStateListener[] ls = listeners.toArray(new ModuleStateListener[listeners.size()]);
-            for (ModuleStateListener listener: ls) {
-                listener.stateChanged(this);
-            }
+            triggerStateChange(this);
         }
     }
 
@@ -136,7 +145,7 @@ public class Module {
             unload();
         }
         else {
-            loader = new Loader();
+            loader = new ModuleLoader();
             version++;
             clearDependencies();
             setState(State.ACTIVE);
@@ -144,14 +153,14 @@ public class Module {
     }
 
     private void clearDependencies() {
-        for (Module module: dependencies) {
+        for (Module module: dependencies.keySet()) {
             module.removeModuleListener(dependencyListener);
         }
         dependencies.clear();
     }
 
     public void invalidate() {
-        if (getState() != FREEZED) {
+        if (getState() != FROZEN) {
             setState(INVALIDATED);
         }
     }
@@ -179,10 +188,15 @@ public class Module {
         }
     }
 
-    public class Loader extends URLClassLoader {
-        private Loader() {
+    private class ModuleLoader extends URLClassLoader implements Loader {
+
+        ModuleLoader() {
             super(new URL[] { getModuleURL() }, parent.getLoader(Module.this));
         }
+
+        final int version = Module.this.version;
+
+        @Override
         public Class<?> lookup(String className) {
             try {
                 if (! isActive()) {
@@ -194,13 +208,15 @@ public class Module {
                 return null;
             }
         }
+
+        @Override
         public boolean isSourceOf(String className) {
             return findLoadedClass(className) != null;
         }
 
         @Override
         public String toString() {
-            return "Loader of "+ Module.this;
+            return format("%s@Loader:%d", getName(), version);
         }
     }
 }

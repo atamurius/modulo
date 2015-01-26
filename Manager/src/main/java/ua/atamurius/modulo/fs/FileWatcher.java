@@ -19,6 +19,9 @@ public class FileWatcher {
 
     public FileWatcher(ModuleManager manager) {
         this.manager = manager;
+        for (Module module: manager.getModules()) {
+            checkModule(module.getSource());
+        }
     }
 
     public void watch(File root) {
@@ -30,7 +33,6 @@ public class FileWatcher {
 
     private void collect(File[] files) {
         for (File file: files) {
-            System.out.println(file);
             if (file.isFile() && file.getName().toUpperCase().endsWith(".JAR")) {
                 checkModule(file);
             }

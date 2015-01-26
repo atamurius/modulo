@@ -15,4 +15,11 @@
         <output>../target/modules</output>
     </properties>
 
+    <dependencies>
+        <dependency>
+            <groupId>ua.atamurius.modulo</groupId>
+            <artifactId>manager</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+    </dependencies>
 </project>

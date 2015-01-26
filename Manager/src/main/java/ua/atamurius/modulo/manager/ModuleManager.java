@@ -1,5 +1,7 @@
 package ua.atamurius.modulo.manager;
 
+import ua.atamurius.modulo.service.ServiceProxy;
+
 import java.util.ArrayList;
 import java.util.Collection;
 
@@ -8,12 +10,19 @@ import static java.util.Collections.unmodifiableCollection;
 /**
  * Module manager.
  */
-public class ModuleManager {
+public class ModuleManager extends AbstractModule {
 
     private Collection<Module> modules = new ArrayList<Module>();
 
     public void register(Module module) {
         modules.add(module);
+        module.addModuleListener(new ModuleStateListener() {
+            @Override
+            public void stateChanged(Module module) {
+                triggerStateChange(module);
+            }
+        });
+        triggerStateChange(module);
     }
 
     public Collection<Module> getModules() {
@@ -22,7 +31,10 @@ public class ModuleManager {
 
     private final ThreadLocal<Module> callerModule = new ThreadLocal<>();
 
-    protected ClassLoader getLoader() {
+    private final Dispatcher loader = new Dispatcher();
+
+    @Override
+    public Loader getLoader() {
         return loader;
     }
 
@@ -58,7 +70,7 @@ public class ModuleManager {
         return ServiceProxy.create(this, type, impl);
     }
 
-    private final ClassLoader loader = new ClassLoader() {
+    private class Dispatcher extends ClassLoader implements Loader {
         @Override
         protected Class<?> findClass(String name) throws ClassNotFoundException {
             Module caller = callerModule.get();
@@ -67,7 +79,7 @@ public class ModuleManager {
                     Class<?> cls = module.getLoader().lookup(name);
                     if (cls != null) {
                         if (caller != null) {
-                            caller.addDependency(module);
+                            caller.addDependency(module, name);
                         }
                         return cls;
                     }
@@ -79,6 +91,28 @@ public class ModuleManager {
         @Override
         public String toString() {
             return "ModuleManager Loader #"+ hashCode();
+        }
+
+        @Override
+        public Class<?> lookup(String name) {
+            for (Module module: modules) {
+                if (module.isActive()) {
+                    Class<?> cls = module.getLoader().lookup(name);
+                    if (cls != null) {
+                        return cls;
+                    }
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public boolean isSourceOf(String className) {
+            for (Module module: modules) {
+                if (module.getLoader().isSourceOf(className))
+                    return true;
+            }
+            return false;
         }
     };
 }

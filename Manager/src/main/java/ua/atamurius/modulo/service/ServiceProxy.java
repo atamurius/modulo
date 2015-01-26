@@ -1,10 +1,14 @@
-package ua.atamurius.modulo.manager;
+package ua.atamurius.modulo.service;
+
+import ua.atamurius.modulo.manager.Module;
+import ua.atamurius.modulo.manager.ModuleManager;
+import ua.atamurius.modulo.manager.ModuleStateListener;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
-class ServiceProxy implements InvocationHandler {
+public class ServiceProxy implements InvocationHandler {
 
     private final ModuleManager manager;
     private final String className;
@@ -24,7 +28,10 @@ class ServiceProxy implements InvocationHandler {
 
     @SuppressWarnings("unchecked")
     public static <T> T create(ModuleManager manager, Class<T> type, String impl) {
-        return (T) Proxy.newProxyInstance(manager.getLoader(), new Class<?>[]{type}, new ServiceProxy(manager, impl));
+        return (T) Proxy.newProxyInstance(
+                (ClassLoader) manager.getLoader(),
+                new Class<?>[]{ type },
+                new ServiceProxy(manager, impl));
     }
 
     public ServiceProxy(ModuleManager manager, String className) {
